@@ -1,0 +1,49 @@
+services:
+  postgres:
+    image: postgres:bullseye
+    restart: always
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/:/docker-entrypoint-initdb.d/
+    environment:
+      POSTGRES_USER: gus
+      POSTGRES_PASSWORD: gus
+      POSTGRES_MULTIPLE_DATABASES: "postgres,monitoramento_rede"
+    command: >
+      postgres
+        -c shared_buffers=8GB
+        -c work_mem=1024MB
+        -c maintenance_work_mem=6GB
+        -c effective_cache_size=20GB
+        -c random_page_cost=1.1
+        -c max_worker_processes=16
+        -c max_parallel_workers=16
+        -c max_parallel_workers_per_gather=8
+        -c checkpoint_completion_target=0.9
+        -c max_wal_size=16GB
+        -c default_statistics_target=200
+    healthcheck:
+      test: [ 'CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}' ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  pgadmin:
+    image: dpage/pgadmin4
+    restart: always
+    ports:
+      - "8081:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: pgadmin4@pgadmin.org
+      PGADMIN_DEFAULT_PASSWORD: gus
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - postgres
+
+volumes:
+  postgres_data:
+  pgadmin_data:
