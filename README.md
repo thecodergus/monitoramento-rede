@@ -110,30 +110,11 @@ database_url = "postgresql://usuario:senha@localhost/monitoring"
 
 ### 2. Instalação e Inicialização
 
-**Com Docker (recomendado):**
-
 ```bash
 git clone <url-do-repositorio>
 cd <diretorio-do-projeto>
-cp codagem/config.toml.example codagem/config.toml
 # Edite o config.toml conforme necessário
 docker-compose up -d
-```
-
-**Manual:**
-
-```bash
-# Instale o Rust
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-# Instale e configure o PostgreSQL
-createdb monitoring
-psql monitoring < docker/postgres/init.sql
-
-# Compile e execute a aplicação
-cd codagem
-cargo build --release
-cargo run
 ```
 
 ### 3. Operação
