@@ -4,6 +4,7 @@ use serde_json::json;
 use std::collections::VecDeque;
 
 /// Estado do consenso multi-ciclo
+#[derive(Debug, Clone)]
 pub struct ConsensusState {
     history: VecDeque<Vec<PingResult>>,
     fail_threshold: usize,

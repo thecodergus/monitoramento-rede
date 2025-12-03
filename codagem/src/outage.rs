@@ -2,6 +2,7 @@ use crate::types::OutageEvent;
 use chrono::Utc;
 
 /// Gerencia início/fim de outages, calcula duração e monta detalhes.
+#[derive(Debug, Clone)]
 pub struct OutageManager {
     current: Option<OutageEvent>,
 }
