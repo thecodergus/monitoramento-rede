@@ -1,8 +1,4 @@
 # Network Monitoring System
-
-## Autor
-**Gustavo Michels de Camargo**
-
 ---
 
 ## Sobre o Projeto
@@ -176,8 +172,3 @@ cargo run
 Projeto desenvolvido e mantido por **Gustavo Michels de Camargo**.
 
 Para dúvidas, sugestões ou contribuições, consulte a documentação do projeto ou entre em contato com o autor.
-
----
-
-**Nota:**  
-Este sistema foi projetado para ambientes de missão crítica, com foco em perstgreSQL.
