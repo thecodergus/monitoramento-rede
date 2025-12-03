@@ -1,6 +1,6 @@
-ping_count = 3
-timeout_secs = 5
-fail_threshold = 2
+ping_count = 2
+timeout_secs = 1
+fail_threshold = 1
 consensus = 3
-cycle_interval_secs = 30
+cycle_interval_secs = 2
 database_url = "postgres://gus:gus@localhost:5432/monitoramento_rede"

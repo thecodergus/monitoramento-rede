@@ -99,7 +99,7 @@ INSERT INTO monitoring_targets (name, address, asn, provider, type, region) VALU
 ('Registro.br d.dns.br', '200.219.154.10', 22548, 'NIC.br', 'dns', 'br'),
 ('Registro.br d.dns.br (IPv6)', '2001:12f8:4::10', 22548, 'NIC.br', 'dns', 'br'),
 ('Registro.br e.dns.br', '200.229.248.10', 22548, 'NIC.br', 'dns', 'br'),
-('Registro.br e.dns.br (IPv6)', '2001:12f8:2::10', 22548, 'NIC.br', 'dns', 'br'),
+('Registro.br e.dns.br (IPv6)', '2001:12f8:2::10', 22548, 'NIC.br', 'dns', 'br');
 
 
 -- SOUTH AMERICA (5 probes)
