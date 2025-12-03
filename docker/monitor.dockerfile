@@ -9,4 +9,4 @@ WORKDIR /app
 
 RUN cargo build --release
 
-CMD [ "cargo", "run", "--release" ]
+CMD [ "./target/release/monitoramento_rede" ]
