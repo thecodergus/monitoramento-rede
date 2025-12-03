@@ -85,29 +85,26 @@ CREATE INDEX idx_metrics_brin_time ON connectivity_metrics USING BRIN (timestamp
 
 -- Cloudflare DNS
 INSERT INTO monitoring_targets (name, address, asn, provider, type, region) VALUES
--- Google Public DNS
 ('Google Public DNS', '8.8.8.8', 15169, 'Google', 'dns', 'global'),
-('Google Public DNS (Alt)', '8.8.4.4', 15169, 'Google', 'dns', 'global'),
-('Google Public DNS (IPv6)', '2001:4860:4860::8888', 15169, 'Google', 'dns', 'global'),
-('Google Public DNS (Alt IPv6)', '2001:4860:4860::8844', 15169, 'Google', 'dns', 'global'),
-
--- OpenDNS (Cisco Umbrella)
 ('OpenDNS', '208.67.222.222', 36692, 'Cisco', 'dns', 'global'),
-('OpenDNS (Alt)', '208.67.220.220', 36692, 'Cisco', 'dns', 'global'),
+('Google Public DNS (IPv6)', '2001:4860:4860::8888', 15169, 'Google', 'dns', 'global'),
 ('OpenDNS (IPv6)', '2620:119:35::35', 36692, 'Cisco', 'dns', 'global'),
-('OpenDNS (Alt IPv6)', '2620:119:53::53', 36692, 'Cisco', 'dns', 'global'),
+('Google Public DNS (Alt IPv6)', '2001:4860:4860::8844', 15169, 'Google', 'dns', 'global'),
+('OpenDNS (Alt)', '208.67.220.220', 36692, 'Cisco', 'dns', 'global'),
+('Google Public DNS (Alt)', '8.8.4.4', 15169, 'Google', 'dns', 'global'),
+('OpenDNS (Alt IPv6)', '2620:119:53::53', 36692, 'Cisco', 'dns', 'global');
 
 -- Registro.br (NIC.br) - Todos servidores autoritativos IPv4 e IPv6
-('Registro.br a.dns.br', '200.160.0.10', 22548, 'NIC.br', 'dns', 'br'),
-('Registro.br a.dns.br (IPv6)', '2001:12f8:6::10', 22548, 'NIC.br', 'dns', 'br'),
-('Registro.br b.dns.br', '200.189.41.10', 22548, 'NIC.br', 'dns', 'br'),
-('Registro.br b.dns.br (IPv6)', '2001:12f8:8::10', 22548, 'NIC.br', 'dns', 'br'),
-('Registro.br c.dns.br', '200.192.233.10', 22548, 'NIC.br', 'dns', 'br'),
-('Registro.br c.dns.br (IPv6)', '2001:12f8:a::10', 22548, 'NIC.br', 'dns', 'br'),
-('Registro.br d.dns.br', '200.219.154.10', 22548, 'NIC.br', 'dns', 'br'),
-('Registro.br d.dns.br (IPv6)', '2001:12f8:4::10', 22548, 'NIC.br', 'dns', 'br'),
-('Registro.br e.dns.br', '200.229.248.10', 22548, 'NIC.br', 'dns', 'br'),
-('Registro.br e.dns.br (IPv6)', '2001:12f8:2::10', 22548, 'NIC.br', 'dns', 'br');
+-- ('Registro.br a.dns.br', '200.160.0.10', 22548, 'NIC.br', 'dns', 'br'),
+-- ('Registro.br a.dns.br (IPv6)', '2001:12f8:6::10', 22548, 'NIC.br', 'dns', 'br'),
+-- ('Registro.br b.dns.br', '200.189.41.10', 22548, 'NIC.br', 'dns', 'br'),
+-- ('Registro.br b.dns.br (IPv6)', '2001:12f8:8::10', 22548, 'NIC.br', 'dns', 'br'),
+-- ('Registro.br c.dns.br', '200.192.233.10', 22548, 'NIC.br', 'dns', 'br'),
+-- ('Registro.br c.dns.br (IPv6)', '2001:12f8:a::10', 22548, 'NIC.br', 'dns', 'br'),
+-- ('Registro.br d.dns.br', '200.219.154.10', 22548, 'NIC.br', 'dns', 'br'),
+-- ('Registro.br d.dns.br (IPv6)', '2001:12f8:4::10', 22548, 'NIC.br', 'dns', 'br'),
+-- ('Registro.br e.dns.br', '200.229.248.10', 22548, 'NIC.br', 'dns', 'br'),
+-- ('Registro.br e.dns.br (IPv6)', '2001:12f8:2::10', 22548, 'NIC.br', 'dns', 'br');
 
 
 -- SOUTH AMERICA (5 probes)
