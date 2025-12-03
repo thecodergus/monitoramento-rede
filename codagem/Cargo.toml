@@ -23,7 +23,7 @@ postgres-types = { version = "0.2.11", features = [
 ] }
 
 # Pool de conexões (opcional, recomendado para produção)
-# deadpool-postgres = "0.12"
+deadpool-postgres = "0.12"
 
 # Configuração
 config = "0.13.4"
