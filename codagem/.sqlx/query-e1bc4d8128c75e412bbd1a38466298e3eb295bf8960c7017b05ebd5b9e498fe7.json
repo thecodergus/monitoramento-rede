@@ -1,0 +1,56 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, name, address, asn, provider, type as \"type_\", region FROM monitoring_targets",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "address",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "asn",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 4,
+        "name": "provider",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "type_",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "region",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "e1bc4d8128c75e412bbd1a38466298e3eb295bf8960c7017b05ebd5b9e498fe7"
+}

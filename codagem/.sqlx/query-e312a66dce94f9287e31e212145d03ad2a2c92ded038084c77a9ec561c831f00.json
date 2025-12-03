@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO outage_events\n            (start_time, end_time, duration_seconds, reason, affected_targets, affected_probes, consensus_level, details)\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Timestamptz",
+        "Int4",
+        "Text",
+        "Int4Array",
+        "Int4Array",
+        "Int4",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e312a66dce94f9287e31e212145d03ad2a2c92ded038084c77a9ec561c831f00"
+}
