@@ -26,7 +26,7 @@ SELECT
     reason,
     details
 FROM outage_events 
-WHERE duration_seconds <= 1
+WHERE duration_seconds >= 1
 ORDER BY start_time DESC
 
 
