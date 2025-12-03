@@ -77,6 +77,7 @@ CREATE INDEX idx_metrics_type ON connectivity_metrics (metric_type);
 CREATE INDEX idx_cycles_started_at ON monitoring_cycles (started_at);
 CREATE INDEX idx_outage_time ON outage_events (start_time DESC);
 CREATE INDEX idx_outage_duration ON outage_events (duration_seconds) WHERE duration_seconds IS NOT NULL;
+CREATE INDEX idx_metrics_brin_time ON connectivity_metrics USING BRIN (timestamp);
 
 
 
