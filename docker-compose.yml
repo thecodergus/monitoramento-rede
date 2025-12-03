@@ -9,6 +9,7 @@ services:
       POSTGRES_USER: gus
       POSTGRES_PASSWORD: gus
       POSTGRES_MULTIPLE_DATABASES: "postgres,monitoramento_rede"
+      TZ: America/Sao_Paulo
     command: >
       postgres
         -c shared_buffers=8GB
@@ -32,6 +33,7 @@ services:
       PGADMIN_DEFAULT_EMAIL: pgadmin4@pgadmin.org
       PGADMIN_DEFAULT_PASSWORD: gus
       PGADMIN_CONFIG_SERVER_MODE: 'False'
+      TZ: America/Sao_Paulo
     volumes:
       - pgadmin_data:/var/lib/pgadmin
     depends_on:
@@ -43,8 +45,8 @@ services:
       dockerfile: docker/monitor.dockerfile
     environment:
       - DATABASE_URL=postgres://gus:gus@postgres:5432/monitoramento_rede
+      - TZ=America/Sao_Paulo
     restart: always
-    command: sleep infinity
     depends_on:
       - postgres
 
