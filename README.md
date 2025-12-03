@@ -81,16 +81,6 @@ docker-compose.yml       # Orquestração dos serviços
 
 Edite o arquivo `codagem/config.toml` para ajustar os parâmetros do sistema:
 
-```toml
-# Exemplo de configuração
-ping_count = 3
-ping_timeout = 5000
-fail_threshold = 2
-consensus_level = 0.6
-cycle_interval = 1
-database_url = "postgresql://usuario:senha@localhost/monitoring"
-```
-
 - `ping_count`: Número de tentativas de ping por ciclo
 - `ping_timeout`: Timeout de cada ping (ms)
 - `fail_threshold`: Falhas antes de considerar DOWN
