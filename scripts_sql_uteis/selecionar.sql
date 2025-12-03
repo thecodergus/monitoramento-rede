@@ -15,6 +15,21 @@ WHERE duration_seconds BETWEEN 1 AND 3
 ORDER BY start_time DESC
 LIMIT 50;
 
+-- a.2 ) Minha versão
+SELECT 
+    start_time,
+    end_time,
+    duration_seconds,
+    ARRAY_LENGTH(affected_targets, 1) as num_targets_afetados,
+    ARRAY_LENGTH(affected_probes, 1) as num_probes_afetados,
+    consensus_level,
+    reason,
+    details
+FROM outage_events 
+WHERE duration_seconds <= 1
+ORDER BY start_time DESC
+
+
 -- b) Detecção granular de falhas rápidas (tabela connectivity_metrics)
 WITH falhas_consecutivas AS (
     SELECT 
