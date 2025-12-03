@@ -63,6 +63,13 @@ CREATE TABLE outage_events (
     PRIMARY KEY (id, start_time)
 );
 
+CREATE TABLE target_status (
+    target_id INTEGER PRIMARY KEY,
+    last_status TEXT NOT NULL,
+    last_change TIMESTAMP NOT NULL
+);
+
+
 -- 7. Índices otimizados para workloads de monitoramento
 CREATE INDEX idx_metrics_time_target ON connectivity_metrics (timestamp DESC, target_id);
 CREATE INDEX idx_metrics_status_time ON connectivity_metrics (status, timestamp DESC);

@@ -102,4 +102,29 @@ impl Storage {
             .await?;
         Ok(())
     }
+
+    /// Recupera o último status persistido do target
+    pub async fn get_target_status(&self, target_id: i32) -> anyhow::Result<Option<String>> {
+        let row = self
+            .client
+            .query_opt(
+                "SELECT last_status FROM target_status WHERE target_id = $1",
+                &[&target_id],
+            )
+            .await?;
+        Ok(row.map(|r| r.get("last_status")))
+    }
+
+    /// Atualiza o status persistido do target
+    pub async fn set_target_status(&self, target_id: i32, status: &str) -> anyhow::Result<()> {
+        self.client
+            .execute(
+                "INSERT INTO target_status (target_id, last_status, last_change)
+                 VALUES ($1, $2, NOW())
+                 ON CONFLICT (target_id) DO UPDATE SET last_status = $2, last_change = NOW()",
+                &[&target_id, &status],
+            )
+            .await?;
+        Ok(())
+    }
 }

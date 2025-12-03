@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use chrono::{DateTime, Utc};
 use postgres_types::{FromSql, ToSql};
 use serde::{Deserialize, Serialize};
@@ -105,4 +107,31 @@ pub struct OutageEvent {
     pub affected_probes: Option<Vec<i32>>,
     pub consensus_level: i32,
     pub details: serde_json::Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct TargetWarmupState {
+    pub success_streak: HashMap<i32, usize>, // target_id -> contagem de ciclos de sucesso
+    pub required_streak: usize,              // N ciclos necessários
+}
+
+impl TargetWarmupState {
+    pub fn new(required_streak: usize) -> Self {
+        Self {
+            success_streak: HashMap::new(),
+            required_streak,
+        }
+    }
+
+    /// Atualiza o streak de sucesso para um target.
+    /// Retorna true se o target já está "aquecido" (pronto para registrar outages).
+    pub fn update(&mut self, target_id: i32, is_success: bool) -> bool {
+        if is_success {
+            let streak = self.success_streak.entry(target_id).or_insert(0);
+            *streak += 1;
+        } else {
+            self.success_streak.insert(target_id, 0);
+        }
+        self.success_streak[&target_id] >= self.required_streak
+    }
 }
