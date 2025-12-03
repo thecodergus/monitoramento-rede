@@ -1,21 +1,40 @@
 [package]
 name = "monitoramento_rede"
 version = "0.1.0"
-edition = "2024"
+edition = "2024"            # Use 2024 só se seu toolchain for >= 1.85
 
 [dependencies]
-tokio = { version = "1.37", features = ["full"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-config = "0.13"
-sqlx = { version = "0.7", features = [
-    "runtime-tokio",
-    "postgres",
-    "chrono",
-    "json",
+# Async runtime
+tokio = { version = "1.48", features = ["full"] }
+
+# Serialização
+serde = { version = "1.0.197", features = ["derive"] }
+serde_json = "1.0.145"
+
+# Banco de dados PostgreSQL
+tokio-postgres = { version = "0.7.10", features = [
+    "with-chrono-0_4",
+    "with-serde_json-1",
 ] }
-chrono = { version = "0.4", features = ["serde"] }
-tracing = "0.1"
-tracing-subscriber = "0.3"
-anyhow = "1.0"
-thiserror = "1.0"
+postgres-types = { version = "0.2.11", features = [
+    "derive",
+    "with-serde_json-1",
+    "with-chrono-0_4",
+] }
+
+# Pool de conexões (opcional, recomendado para produção)
+# deadpool-postgres = "0.12"
+
+# Configuração
+config = "0.13.4"
+
+# Datas e horários
+chrono = { version = "0.4.42", features = ["serde"] }
+
+# Logging e tracing
+tracing = "0.1.40"
+tracing-subscriber = "0.3.18"
+
+# Tratamento de erros
+anyhow = "1.0.82"
+thiserror = "2.0.0"

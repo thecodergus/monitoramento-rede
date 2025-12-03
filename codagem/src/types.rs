@@ -1,10 +1,11 @@
 use chrono::{DateTime, Utc};
+use postgres_types::{FromSql, ToSql};
 use serde::{Deserialize, Serialize};
-use sqlx::Type;
+use tokio_postgres::Row;
 
 /// Enum para status da métrica (PostgreSQL)
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type, PartialEq, Eq)]
-#[sqlx(type_name = "metric_status", rename_all = "lowercase")]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSql, FromSql)]
+#[postgres(name = "metric_status", rename_all = "lowercase")]
 pub enum MetricStatus {
     Up,
     Down,
@@ -13,8 +14,8 @@ pub enum MetricStatus {
 }
 
 /// Enum para tipo de métrica (PostgreSQL)
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type, PartialEq, Eq)]
-#[sqlx(type_name = "metric_type", rename_all = "lowercase")]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSql, FromSql)]
+#[postgres(name = "metric_type", rename_all = "lowercase")]
 pub enum MetricType {
     Ping,
     Http,
@@ -23,25 +24,49 @@ pub enum MetricType {
 }
 
 /// Struct de alvo monitorado (normalizado)
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Target {
     pub id: i32,
     pub name: String,
     pub address: String,
     pub asn: Option<i32>,
     pub provider: Option<String>,
-    #[sqlx(rename = "type")]
     pub type_: String,
     pub region: Option<String>,
 }
 
+impl From<Row> for Target {
+    fn from(row: Row) -> Self {
+        Self {
+            id: row.get("id"),
+            name: row.get("name"),
+            address: row.get("address"),
+            asn: row.get("asn"),
+            provider: row.get("provider"),
+            type_: row.get("type"),
+            region: row.get("region"),
+        }
+    }
+}
+
 /// Struct de probe (multi-localização)
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Probe {
     pub id: i32,
     pub location: String,
     pub ip_address: Option<String>,
     pub provider: Option<String>,
+}
+
+impl From<Row> for Probe {
+    fn from(row: Row) -> Self {
+        Self {
+            id: row.get("id"),
+            location: row.get("location"),
+            ip_address: row.get("ip_address"),
+            provider: row.get("provider"),
+        }
+    }
 }
 
 /// Struct de ciclo de monitoramento
