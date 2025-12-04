@@ -3,9 +3,13 @@
 use crate::types::{Cycle, Probe, Target};
 use crate::{config::Config, ping, storage::Storage};
 use chrono::Utc;
+use std::net::Ipv4Addr;
 use std::{sync::Arc, time::Duration, time::Instant};
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
+
+use tokio::net::TcpStream;
+use trust_dns_resolver::TokioAsyncResolver;
 
 /// Enum de estados do scheduler: aguardando internet ou monitorando.
 enum SchedulerState {
@@ -13,46 +17,111 @@ enum SchedulerState {
     Monitoring,
 }
 
-/// Função auxiliar para checar conectividade.
-/// Retorna true se a internet está disponível, false caso contrário.
-/// Aqui, faz ping no primeiro target como referência.
-async fn check_connectivity(targets: &[Target], probe: &Probe, config: &Config) -> bool {
-    let reference_target = targets.get(0);
-    if let Some(target) = reference_target {
-        info!(
-            "[PROBE {}] Verificando conectividade inicial com target de referência: {}",
-            probe.location, target.name
-        );
-        let result = ping::ping_targets(
-            &[target.clone()],
-            probe,
-            config.ping_count,
-            config.timeout_secs,
-            0, // cycle_id fictício
-        )
-        .await;
-        let is_up = result
-            .iter()
-            .any(|r| r.status == crate::types::MetricStatus::Up);
-        if is_up {
-            info!(
-                "[PROBE {}] Conectividade inicial confirmada com target {}.",
-                probe.location, target.name
-            );
-        } else {
-            warn!(
-                "[PROBE {}] Falha na verificação inicial de conectividade com target {}.",
-                probe.location, target.name
-            );
+/// Verificação multi-método de conectividade.
+/// Tenta TCP connect, resolução DNS e ICMP/ping (fallback).
+/// Loga detalhadamente cada tentativa e motivo de falha.
+/// Retorna true se qualquer método/alvo responder.
+async fn check_connectivity_resilient(targets: &[Target], probe: &Probe, config: &Config) -> bool {
+    // 1. TCP connect para portas 53, 80, 443 em todos os targets
+    let tcp_ports = [53u16, 80, 443];
+    for target in targets {
+        for &port in &tcp_ports {
+            let addr = format!("{}:{}", target.address, port);
+            match tokio::time::timeout(Duration::from_secs(3), TcpStream::connect(&addr)).await {
+                Ok(Ok(_)) => {
+                    info!(
+                        "[PROBE {}] TCP connect OK em {}:{} (target: {})",
+                        probe.location, target.address, port, target.name
+                    );
+                    return true;
+                }
+                Ok(Err(e)) => {
+                    warn!(
+                        "[PROBE {}] Falha TCP connect em {}:{} (target: {}): {:?}",
+                        probe.location, target.address, port, target.name, e
+                    );
+                }
+                Err(_) => {
+                    warn!(
+                        "[PROBE {}] Timeout TCP connect em {}:{} (target: {})",
+                        probe.location, target.address, port, target.name
+                    );
+                }
+            }
         }
-        is_up
+    }
+
+    // 2. Resolução DNS para domínios conhecidos
+    let resolver = match TokioAsyncResolver::tokio_from_system_conf() {
+        Ok(r) => r,
+        Err(e) => {
+            error!(
+                "[PROBE {}] Falha ao inicializar resolver DNS: {:?}",
+                probe.location, e
+            );
+            // Não retorna, tenta ICMP/ping
+            return false;
+        }
+    };
+    let dns_domains = ["www.google.com", "cloudflare.com"];
+
+    for domain in &dns_domains {
+        match tokio::time::timeout(Duration::from_secs(3), resolver.lookup_ip(domain)).await {
+            Ok(Ok(lookup)) if lookup.iter().next().is_some() => {
+                info!(
+                    "[PROBE {}] Resolução DNS OK para {}",
+                    probe.location, domain
+                );
+                return true;
+            }
+            Ok(Ok(_)) => {
+                warn!(
+                    "[PROBE {}] Resolução DNS para {} não retornou IPs",
+                    probe.location, domain
+                );
+            }
+            Ok(Err(e)) => {
+                warn!(
+                    "[PROBE {}] Falha na resolução DNS para {}: {:?}",
+                    probe.location, domain, e
+                );
+            }
+            Err(_) => {
+                warn!(
+                    "[PROBE {}] Timeout na resolução DNS para {}",
+                    probe.location, domain
+                );
+            }
+        }
+    }
+
+    // 3. ICMP/ping como fallback final
+    let result = ping::ping_targets(
+        targets,
+        probe,
+        config.ping_count,
+        config.timeout_secs,
+        0, // cycle_id fictício
+    )
+    .await;
+    if result
+        .iter()
+        .any(|r| r.status == crate::types::MetricStatus::Up)
+    {
+        info!("[PROBE {}] ICMP/ping OK em algum target", probe.location);
+        return true;
     } else {
-        error!(
-            "[PROBE {}] Nenhum target disponível para verificação de conectividade!",
+        warn!(
+            "[PROBE {}] Falha em todas as tentativas de ICMP/ping.",
             probe.location
         );
-        false
     }
+
+    error!(
+        "[PROBE {}] Nenhum método de verificação de conectividade teve sucesso.",
+        probe.location
+    );
+    false
 }
 
 /// Scheduler principal: verifica internet uma vez, depois executa pings infinitamente.
@@ -71,7 +140,7 @@ pub async fn run_scheduler(
                     "[ESTADO: AGUARDANDO INTERNET] [PROBE {}] Aguardando conectividade...",
                     probe.location
                 );
-                if check_connectivity(&targets, &probe, &config).await {
+                if check_connectivity_resilient(&targets, &probe, &config).await {
                     info!(
                         "[ESTADO: MONITORAMENTO ATIVO] [PROBE {}] Internet detectada, iniciando monitoramento contínuo.",
                         probe.location
