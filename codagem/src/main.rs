@@ -7,69 +7,106 @@ mod scheduler;
 mod storage;
 mod types;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::task;
+use tokio::time::timeout;
+use tracing::{debug, error, info, warn};
 use tracing_subscriber;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt().init();
 
-    let config: Arc<config::Config> = Arc::new(config::Config::load()?);
-    let storage: Arc<storage::Storage> =
-        Arc::new(storage::Storage::connect(&config.database_url).await?);
+    info!("🚀 Iniciando aplicação de monitoramento de rede...");
 
-    let targets: Vec<types::Target> = storage.list_targets().await?;
+    // Carregando configuração
+    info!("🔧 Carregando configuração...");
+    let config: Arc<config::Config> =
+        Arc::new(config::Config::load().context("Falha ao carregar configuração")?);
+    debug!("Configuração carregada: {:?}", config);
+
+    // Conectando ao banco de dados com timeout
+    info!("🗄️  Conectando ao banco de dados...");
+    let storage: Arc<storage::Storage> = Arc::new(
+        timeout(
+            Duration::from_secs(10),
+            storage::Storage::connect(&config.database_url),
+        )
+        .await
+        .context("Timeout ao conectar ao banco de dados")??,
+    );
+    info!("✅ Conexão ao banco de dados estabelecida.");
+
+    // Listando targets
+    info!("🎯 Consultando targets...");
+    let targets: Vec<types::Target> = timeout(Duration::from_secs(8), storage.list_targets())
+        .await
+        .context("Timeout ao consultar targets")??;
+    info!("Targets encontrados: {}", targets.len());
     if targets.is_empty() {
+        error!("Nenhum alvo registrado no banco de dados");
         anyhow::bail!("Nenhum alvo registrado no banco de dados");
     }
 
-    let probes: Vec<types::Probe> = storage.list_probes().await?;
+    // Listando probes
+    info!("📡 Consultando probes...");
+    let probes: Vec<types::Probe> = timeout(Duration::from_secs(8), storage.list_probes())
+        .await
+        .context("Timeout ao consultar probes")??;
+    info!("Probes encontrados: {}", probes.len());
     if probes.is_empty() {
+        error!("Nenhum probe registrado no banco de dados");
         anyhow::bail!("Nenhum probe registrado no banco de dados");
     }
 
-    let consensus: consensus::ConsensusState =
-        consensus::ConsensusState::new(config.fail_threshold, config.consensus.clone());
-    let outage_manager: outage::OutageManager = outage::OutageManager::new();
-
-    // --- Melhorias: Grace Period, Warmup State ---
-    let start_time = Instant::now();
-    let grace_period = Duration::from_secs(30); // Ajuste conforme necessário
-    let initial_warmup_state = types::TargetWarmupState::new(3); // Exemplo: 3 ciclos de sucesso
-
+    // Spawn de schedulers para cada probe
     let mut handles: Vec<task::JoinHandle<()>> = Vec::new();
     for probe in probes {
         let config = Arc::clone(&config);
         let storage = Arc::clone(&storage);
-        let consensus = consensus.clone();
-        let outage_manager = outage_manager.clone();
         let targets = targets.clone();
-        let current_warmup_state = initial_warmup_state.clone();
 
-        let handle = task::spawn(async move {
-            scheduler::run_scheduler(
-                config,
-                storage,
-                consensus,
-                outage_manager,
-                probe,
-                targets,
-                start_time,
-                grace_period,
-                current_warmup_state,
-            )
-            .await
-        });
+        info!("🟢 Spawnando scheduler para probe: {:?}", probe);
+
+        let handle =
+            task::spawn(
+                async move { scheduler::run_scheduler(config, storage, probe, targets).await },
+            );
         handles.push(handle);
     }
 
-    for handle in handles {
-        if let Err(e) = handle.await {
-            eprintln!("Scheduler error: {:?}", e);
+    // Pattern matching idiomático para tratar panics e erros via JoinHandle
+    let mut panic_count = 0;
+    let mut error_count = 0;
+
+    for (index, handle) in handles.into_iter().enumerate() {
+        match handle.await {
+            Ok(_) => {
+                info!("✅ Scheduler {} finalizado com sucesso", index + 1);
+            }
+            Err(join_err) if join_err.is_panic() => {
+                panic_count += 1;
+                error!("💥 Task {} panicked: {:?}", index + 1, join_err);
+            }
+            Err(join_err) if join_err.is_cancelled() => {
+                warn!("🚫 Task {} foi cancelada: {:?}", index + 1, join_err);
+            }
+            Err(join_err) => {
+                error_count += 1;
+                error!("❌ Scheduler {} error: {:?}", index + 1, join_err);
+            }
         }
+    }
+
+    if panic_count > 0 || error_count > 0 {
+        warn!(
+            "Aplicação finalizada com {} panics e {} erros",
+            panic_count, error_count
+        );
+    } else {
+        info!("🏁 Aplicação finalizada com sucesso - todos os schedulers terminaram normalmente.");
     }
 
     Ok(())

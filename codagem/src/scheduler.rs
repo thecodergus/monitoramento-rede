@@ -1,158 +1,175 @@
 // src/scheduler.rs
-use crate::types::{Cycle, Probe, Target, TargetWarmupState};
-use crate::{
-    config::Config, consensus::ConsensusState, outage::OutageManager, ping, storage::Storage,
-};
-use chrono::Utc;
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
-use tokio::time::interval;
-use tracing::{error, info, warn};
 
+use crate::types::{Cycle, Probe, Target};
+use crate::{config::Config, ping, storage::Storage};
+use chrono::Utc;
+use std::{sync::Arc, time::Duration, time::Instant};
+use tokio::time::interval;
+use tracing::{debug, error, info, warn};
+
+/// Enum de estados do scheduler: aguardando internet ou monitorando.
+enum SchedulerState {
+    WaitingForInternet,
+    Monitoring,
+}
+
+/// Função auxiliar para checar conectividade.
+/// Retorna true se a internet está disponível, false caso contrário.
+/// Aqui, faz ping no primeiro target como referência.
+async fn check_connectivity(targets: &[Target], probe: &Probe, config: &Config) -> bool {
+    let reference_target = targets.get(0);
+    if let Some(target) = reference_target {
+        info!(
+            "[PROBE {}] Verificando conectividade inicial com target de referência: {}",
+            probe.location, target.name
+        );
+        let result = ping::ping_targets(
+            &[target.clone()],
+            probe,
+            config.ping_count,
+            config.timeout_secs,
+            0, // cycle_id fictício
+        )
+        .await;
+        let is_up = result
+            .iter()
+            .any(|r| r.status == crate::types::MetricStatus::Up);
+        if is_up {
+            info!(
+                "[PROBE {}] Conectividade inicial confirmada com target {}.",
+                probe.location, target.name
+            );
+        } else {
+            warn!(
+                "[PROBE {}] Falha na verificação inicial de conectividade com target {}.",
+                probe.location, target.name
+            );
+        }
+        is_up
+    } else {
+        error!(
+            "[PROBE {}] Nenhum target disponível para verificação de conectividade!",
+            probe.location
+        );
+        false
+    }
+}
+
+/// Scheduler principal: verifica internet uma vez, depois executa pings infinitamente.
 pub async fn run_scheduler(
     config: Arc<Config>,
     storage: Arc<Storage>,
-    mut consensus: ConsensusState,
-    mut outage: OutageManager,
     probe: Probe,
     targets: Vec<Target>,
-    main_start_time: Instant,
-    grace_period_duration: Duration,
-    mut warmup_state: TargetWarmupState,
 ) {
-    let mut ticker = interval(Duration::from_secs(config.cycle_interval_secs));
-    let mut cycle_number = 0;
+    let mut state = SchedulerState::WaitingForInternet;
 
     loop {
-        ticker.tick().await;
-        cycle_number += 1;
-        let started_at = Utc::now();
-        let cycle = Cycle {
-            id: 0,
-            started_at,
-            ended_at: None,
-            cycle_number,
-            probe_count: 1,
-        };
-
-        let cycle_id = match storage.insert_cycle(&cycle).await {
-            Ok(id) => id,
-            Err(e) => {
-                error!("Erro ao persistir ciclo: {:?}", e);
-                continue;
-            }
-        };
-
-        let results = ping::ping_targets(
-            &targets,
-            &probe,
-            config.ping_count,
-            config.timeout_secs,
-            cycle_id,
-        )
-        .await;
-
-        for res in &results {
-            if let Err(e) = storage.insert_ping_result(res).await {
-                error!(
-                    "Erro ao persistir métrica para target {}: {:?}",
-                    res.target_id, e
+        match state {
+            SchedulerState::WaitingForInternet => {
+                info!(
+                    "[ESTADO: AGUARDANDO INTERNET] [PROBE {}] Aguardando conectividade...",
+                    probe.location
                 );
-            }
-        }
-
-        let current_time = Instant::now();
-
-        for target in &targets {
-            let is_target_up = results.iter().any(|r| r.target_id == target.id);
-
-            // 1. Grace Period: Ignora falhas se ainda estiver no período de carência
-            if current_time.duration_since(main_start_time) < grace_period_duration {
-                if !is_target_up {
+                if check_connectivity(&targets, &probe, &config).await {
+                    info!(
+                        "[ESTADO: MONITORAMENTO ATIVO] [PROBE {}] Internet detectada, iniciando monitoramento contínuo.",
+                        probe.location
+                    );
+                    state = SchedulerState::Monitoring;
+                } else {
                     warn!(
-                        "Grace period ativo para probe {} e target {}: ignorando falha temporária",
-                        probe.location, target.name
+                        "[PROBE {}] Internet não detectada. Nova tentativa em 10 segundos...",
+                        probe.location
                     );
+                    tokio::time::sleep(Duration::from_secs(10)).await;
                 }
-                continue;
             }
+            SchedulerState::Monitoring => {
+                let mut ticker = interval(Duration::from_secs(config.cycle_interval_secs));
+                let mut cycle_number = 0;
 
-            // 3. Warmup: Só considera o target "aquecido" após N ciclos de sucesso
-            let is_warmed_up = warmup_state.update(target.id, is_target_up);
-            if !is_warmed_up {
-                info!(
-                    "Target {} ainda em warmup para probe {}: ignorando falhas até atingir {} ciclos de sucesso",
-                    target.name, probe.location, warmup_state.required_streak
-                );
-                continue;
-            }
+                loop {
+                    let cycle_start = Instant::now();
+                    ticker.tick().await;
+                    cycle_number += 1;
+                    let started_at = Utc::now();
 
-            // 5. Persistência de Estado: Só registra outage se houver transição real de UP para DOWN
-            let last_status_option =
-                storage
-                    .get_target_status(target.id)
-                    .await
-                    .unwrap_or_else(|e| {
-                        error!(
-                            "Erro ao obter status anterior do target {}: {:?}",
-                            target.name, e
-                        );
-                        None
-                    });
-            let last_status = last_status_option.unwrap_or_else(|| "unknown".to_string());
-
-            if last_status == "up" && !is_target_up {
-                info!(
-                    "Transição de UP para DOWN detectada para target {} (probe {}). Registrando outage.",
-                    target.name, probe.location
-                );
-                let target_results: Vec<_> = results
-                    .iter()
-                    .filter(|r| r.target_id == target.id)
-                    .cloned()
-                    .collect();
-                let maybe_outage = consensus.update(target_results, started_at);
-                if let Some(event) = outage.handle_cycle(maybe_outage, started_at) {
-                    if let Err(e) = storage.insert_outage_event(&event).await {
-                        error!(
-                            "Erro ao persistir outage para target {}: {:?}",
-                            target.name, e
-                        );
-                    } else {
-                        info!(
-                            "Evento de outage registrado para target {}: {:?}",
-                            target.name, event
-                        );
-                    }
-                }
-                if let Err(e) = storage.set_target_status(target.id, "down").await {
-                    error!(
-                        "Erro ao persistir status 'down' para target {}: {:?}",
-                        target.name, e
+                    info!(
+                        "[PROBE {}][CICLO {}] Iniciando ciclo em {}.",
+                        probe.location, cycle_number, started_at
                     );
-                }
-            } else if is_target_up && last_status != "up" {
-                info!(
-                    "Transição para UP detectada para target {} (probe {}). Atualizando status.",
-                    target.name, probe.location
-                );
-                if let Err(e) = storage.set_target_status(target.id, "up").await {
-                    error!(
-                        "Erro ao persistir status 'up' para target {}: {:?}",
-                        target.name, e
+
+                    // 1. Persistência do ciclo
+                    let cycle = Cycle {
+                        id: 0,
+                        started_at,
+                        ended_at: None,
+                        cycle_number,
+                        probe_count: 1,
+                    };
+                    let cycle_id = match storage.insert_cycle(&cycle).await {
+                        Ok(id) => {
+                            debug!(
+                                "[PROBE {}][CICLO {}] Ciclo persistido com id {}.",
+                                probe.location, cycle_number, id
+                            );
+                            id
+                        }
+                        Err(e) => {
+                            error!(
+                                "[PROBE {}][CICLO {}] Erro ao persistir ciclo: {:?}",
+                                probe.location, cycle_number, e
+                            );
+                            continue;
+                        }
+                    };
+
+                    // 2. Execução dos pings
+                    info!(
+                        "[PROBE {}][CICLO {}] Executando pings para {} targets...",
+                        probe.location,
+                        cycle_number,
+                        targets.len()
                     );
-                }
-            } else {
-                let new_status = if is_target_up { "up" } else { "down" };
-                if last_status != new_status {
-                    if let Err(e) = storage.set_target_status(target.id, new_status).await {
-                        error!(
-                            "Erro ao persistir status '{}' para target {}: {:?}",
-                            new_status, target.name, e
+                    let ping_start = Instant::now();
+                    let results = ping::ping_targets(
+                        &targets,
+                        &probe,
+                        config.ping_count,
+                        config.timeout_secs,
+                        cycle_id,
+                    )
+                    .await;
+                    let ping_duration = ping_start.elapsed();
+                    info!(
+                        "[PROBE {}][CICLO {}] Pings finalizados em {:?}.",
+                        probe.location, cycle_number, ping_duration
+                    );
+
+                    // 3. Persistência dos resultados de ping
+                    for res in &results {
+                        debug!(
+                            "[PROBE {}][CICLO {}] Ping target {}: status={:?}",
+                            probe.location, cycle_number, res.target_id, res.status
                         );
+                        match storage.insert_ping_result(res).await {
+                            Ok(_) => debug!(
+                                "[PROBE {}][CICLO {}] Métrica persistida para target {}.",
+                                probe.location, cycle_number, res.target_id
+                            ),
+                            Err(e) => error!(
+                                "[PROBE {}][CICLO {}] Erro ao persistir métrica para target {}: {:?}",
+                                probe.location, cycle_number, res.target_id, e
+                            ),
+                        }
                     }
+
+                    let cycle_duration = cycle_start.elapsed();
+                    info!(
+                        "[PROBE {}][CICLO {}] Fim do ciclo. Duração: {:?}\n",
+                        probe.location, cycle_number, cycle_duration
+                    );
                 }
             }
         }
