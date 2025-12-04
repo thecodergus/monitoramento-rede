@@ -5,7 +5,8 @@ edition = "2024"            # Use 2024 só se seu toolchain for >= 1.85
 
 [dependencies]
 # Async runtime
-tokio = { version = "1.48", features = ["full"] }
+tokio = { version = "1.28", features = ["full"] }
+trust-dns-resolver = { version = "0.23", features = ["tokio-runtime"] }
 
 # Serialização
 serde = { version = "1.0.197", features = ["derive"] }
