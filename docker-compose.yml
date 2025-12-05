@@ -63,9 +63,6 @@ services:
       - TZ=America/Sao_Paulo
     restart: always
     network_mode: "host"
-    command: sleep infinity
-    volumes:
-      - ./codagem/:/app/
     healthcheck:
       # Se sua aplicação expõe um endpoint HTTP de healthcheck, prefira:
       # test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
