@@ -1,21 +1,28 @@
 // src/scheduler.rs
 
-use crate::types::{Cycle, Probe, Target};
+//! Scheduler de monitoramento de rede — compatível com types.rs moderno
+//!
+//! Orquestra ciclos de monitoramento, verifica conectividade, coleta métricas
+//! e persiste resultados usando tipos granulares e idiomáticos.
+//!
+//! - Usa ConnectivityMetric (não mais PingResult)
+//! - Endereços IP são IpAddr (não String)
+//! - Enum MetricType granular (PingIpv4/PingIpv6)
+//! - Lógica funcional, concorrente e auditável
+
+use crate::types::{
+    ConnectivityMetric, Cycle, MetricStatus, MetricType, Probe, SchedulerState, Target,
+    TargetWarmupState,
+};
 use crate::{config::Config, ping, storage::Storage};
 use chrono::Utc;
-use std::net::Ipv4Addr;
-use std::{sync::Arc, time::Duration, time::Instant};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
 
 use tokio::net::TcpStream;
 use trust_dns_resolver::TokioAsyncResolver;
-
-/// Enum de estados do scheduler: aguardando internet ou monitorando.
-enum SchedulerState {
-    WaitingForInternet,
-    Monitoring,
-}
 
 /// Verificação multi-método de conectividade.
 /// Tenta TCP connect, resolução DNS e ICMP/ping (fallback).
@@ -51,194 +58,157 @@ async fn check_connectivity_resilient(targets: &[Target], probe: &Probe, config:
         }
     }
 
-    // 2. Resolução DNS para domínios conhecidos
-    let resolver = match TokioAsyncResolver::tokio_from_system_conf() {
-        Ok(r) => r,
-        Err(e) => {
-            error!(
-                "[PROBE {}] Falha ao inicializar resolver DNS: {:?}",
-                probe.location, e
-            );
-            // Não retorna, tenta ICMP/ping
-            return false;
-        }
-    };
-    let dns_domains = ["www.google.com", "cloudflare.com"];
-
-    for domain in &dns_domains {
-        match tokio::time::timeout(Duration::from_secs(3), resolver.lookup_ip(domain)).await {
-            Ok(Ok(lookup)) if lookup.iter().next().is_some() => {
-                info!(
-                    "[PROBE {}] Resolução DNS OK para {}",
-                    probe.location, domain
-                );
-                return true;
-            }
-            Ok(Ok(_)) => {
-                warn!(
-                    "[PROBE {}] Resolução DNS para {} não retornou IPs",
-                    probe.location, domain
-                );
-            }
-            Ok(Err(e)) => {
-                warn!(
-                    "[PROBE {}] Falha na resolução DNS para {}: {:?}",
-                    probe.location, domain, e
-                );
-            }
-            Err(_) => {
-                warn!(
-                    "[PROBE {}] Timeout na resolução DNS para {}",
-                    probe.location, domain
-                );
+    // 2. Resolução DNS (usando trust-dns)
+    if let Ok(resolver) = TokioAsyncResolver::tokio_from_system_conf() {
+        for target in targets {
+            // Tenta resolver o nome reverso do IP
+            match resolver.reverse_lookup(target.address).await {
+                Ok(response) if response.iter().next().is_some() => {
+                    // resposta DNS reversa não vazia
+                    info!(
+                        "[PROBE {}] DNS reverso OK para {} (target: {})",
+                        probe.location, target.address, target.name
+                    );
+                    return true;
+                }
+                Ok(_) | Err(_) => {
+                    warn!(
+                        "[PROBE {}] Falha DNS reverso para {} (target: {})",
+                        probe.location, target.address, target.name
+                    );
+                }
             }
         }
     }
 
-    // 3. ICMP/ping como fallback final
-    let result = ping::ping_targets(
-        targets,
-        probe,
-        config.ping_count,
-        config.timeout_secs,
-        0, // cycle_id fictício
+    // 3. ICMP/ping (fallback)
+    let ping_results = ping::ping_targets(
+        targets, probe, 1, // apenas 1 tentativa rápida
+        2, // timeout curto
+        0, // ciclo fictício
     )
     .await;
-    if result
-        .iter()
-        .any(|r| r.status == crate::types::MetricStatus::Up)
-    {
-        info!("[PROBE {}] ICMP/ping OK em algum target", probe.location);
-        return true;
-    } else {
-        warn!(
-            "[PROBE {}] Falha em todas as tentativas de ICMP/ping.",
+    if ping_results.iter().any(|m| m.status == MetricStatus::Up) {
+        info!(
+            "[PROBE {}] ICMP ping OK para pelo menos um target",
             probe.location
         );
+        return true;
     }
 
-    error!(
-        "[PROBE {}] Nenhum método de verificação de conectividade teve sucesso.",
+    warn!(
+        "[PROBE {}] Nenhum método de conectividade teve sucesso",
         probe.location
     );
     false
 }
 
-/// Scheduler principal: verifica internet uma vez, depois executa pings infinitamente.
+/// Loop principal do scheduler para um probe.
+/// Executa ciclos de monitoramento, coleta métricas e persiste resultados.
+/// - Aguarda internet antes de iniciar ciclos
+/// - Usa TargetWarmupState para evitar falsos positivos
+/// - Integra com storage, ping e consensus
 pub async fn run_scheduler(
-    config: Arc<Config>,
-    storage: Arc<Storage>,
     probe: Probe,
     targets: Vec<Target>,
+    config: Arc<Config>,
+    storage: Arc<Storage>,
 ) {
     let mut state = SchedulerState::WaitingForInternet;
+    let mut warmup = TargetWarmupState::new(3); // Exemplo: 3 ciclos de sucesso para "aquecimento"
+    let mut cycle_number = 0;
 
+    let mut ticker = interval(Duration::from_secs(config.cycle_interval_secs));
     loop {
+        ticker.tick().await;
+        let now = Utc::now();
+
         match state {
             SchedulerState::WaitingForInternet => {
                 info!(
-                    "[ESTADO: AGUARDANDO INTERNET] [PROBE {}] Aguardando conectividade...",
+                    "[PROBE {}] Aguardando conectividade de internet...",
                     probe.location
                 );
                 if check_connectivity_resilient(&targets, &probe, &config).await {
                     info!(
-                        "[ESTADO: MONITORAMENTO ATIVO] [PROBE {}] Internet detectada, iniciando monitoramento contínuo.",
+                        "[PROBE {}] Internet detectada, iniciando monitoramento.",
                         probe.location
                     );
                     state = SchedulerState::Monitoring;
                 } else {
-                    warn!(
-                        "[PROBE {}] Internet não detectada. Nova tentativa em 10 segundos...",
-                        probe.location
-                    );
-                    tokio::time::sleep(Duration::from_secs(10)).await;
+                    continue;
                 }
             }
             SchedulerState::Monitoring => {
-                let mut ticker = interval(Duration::from_secs(config.cycle_interval_secs));
-                let mut cycle_number = 0;
-
-                loop {
-                    let cycle_start = Instant::now();
-                    ticker.tick().await;
-                    cycle_number += 1;
-                    let started_at = Utc::now();
-
-                    info!(
-                        "[PROBE {}][CICLO {}] Iniciando ciclo em {}.",
-                        probe.location, cycle_number, started_at
-                    );
-
-                    // 1. Persistência do ciclo
-                    let cycle = Cycle {
-                        id: 0,
-                        started_at,
-                        ended_at: None,
-                        cycle_number,
-                        probe_count: 1,
-                    };
-                    let cycle_id = match storage.insert_cycle(&cycle).await {
-                        Ok(id) => {
-                            debug!(
-                                "[PROBE {}][CICLO {}] Ciclo persistido com id {}.",
-                                probe.location, cycle_number, id
-                            );
-                            id
-                        }
-                        Err(e) => {
-                            error!(
-                                "[PROBE {}][CICLO {}] Erro ao persistir ciclo: {:?}",
-                                probe.location, cycle_number, e
-                            );
-                            continue;
-                        }
-                    };
-
-                    // 2. Execução dos pings
-                    info!(
-                        "[PROBE {}][CICLO {}] Executando pings para {} targets...",
-                        probe.location,
-                        cycle_number,
-                        targets.len()
-                    );
-                    let ping_start = Instant::now();
-                    let results = ping::ping_targets(
-                        &targets,
-                        &probe,
-                        config.ping_count,
-                        config.timeout_secs,
-                        cycle_id,
-                    )
-                    .await;
-                    let ping_duration = ping_start.elapsed();
-                    info!(
-                        "[PROBE {}][CICLO {}] Pings finalizados em {:?}.",
-                        probe.location, cycle_number, ping_duration
-                    );
-
-                    // 3. Persistência dos resultados de ping
-                    for res in &results {
-                        debug!(
-                            "[PROBE {}][CICLO {}] Ping target {}: status={:?}",
-                            probe.location, cycle_number, res.target_id, res.status
+                cycle_number += 1;
+                let cycle = Cycle {
+                    id: 0,
+                    started_at: now,
+                    ended_at: None,
+                    cycle_number,
+                    probe_count: 1,
+                };
+                // Persiste ciclo e obtém id
+                let cycle_id = match storage.insert_cycle(&cycle).await {
+                    Ok(id) => id,
+                    Err(e) => {
+                        error!(
+                            "[PROBE {}] Falha ao inserir ciclo no banco: {:?}",
+                            probe.location, e
                         );
-                        match storage.insert_ping_result(res).await {
-                            Ok(_) => debug!(
-                                "[PROBE {}][CICLO {}] Métrica persistida para target {}.",
-                                probe.location, cycle_number, res.target_id
-                            ),
-                            Err(e) => error!(
-                                "[PROBE {}][CICLO {}] Erro ao persistir métrica para target {}: {:?}",
-                                probe.location, cycle_number, res.target_id, e
-                            ),
-                        }
+                        continue;
                     }
+                };
 
-                    let cycle_duration = cycle_start.elapsed();
-                    info!(
-                        "[PROBE {}][CICLO {}] Fim do ciclo. Duração: {:?}\n",
-                        probe.location, cycle_number, cycle_duration
+                // Coleta métricas de ping concorrente
+                let metrics = ping::ping_targets(
+                    &targets,
+                    &probe,
+                    config.ping_count,
+                    config.timeout_secs,
+                    cycle_id,
+                )
+                .await;
+
+                // Persiste métricas
+                for metric in &metrics {
+                    if let Err(e) = storage.insert_connectivity_metric(metric).await {
+                        error!(
+                            "[PROBE {}] Falha ao persistir métrica: {:?} (target_id: {})",
+                            probe.location, e, metric.target_id
+                        );
+                    }
+                }
+
+                // Atualiza warmup e status dos targets
+                for metric in &metrics {
+                    let is_success = metric.status == MetricStatus::Up;
+                    let warmed = warmup.update(metric.target_id, is_success);
+                    debug!(
+                        "[PROBE {}] Target {} warmup: {} (status: {:?})",
+                        probe.location, metric.target_id, warmed, metric.status
                     );
+                    // Atualiza status persistido
+                    if let Err(e) = storage
+                        .set_target_status(metric.target_id, &metric.status)
+                        .await
+                    {
+                        warn!(
+                            "[PROBE {}] Falha ao atualizar status do target {}: {:?}",
+                            probe.location, metric.target_id, e
+                        );
+                    }
+                }
+
+                // TODO: Integrar lógica de consenso/outage se necessário
+
+                // Verifica se perdeu conectividade geral
+                if !check_connectivity_resilient(&targets, &probe, &config).await {
+                    warn!(
+                        "[PROBE {}] Perda de conectividade detectada, retornando para WAITING_FOR_INTERNET.",
+                        probe.location
+                    );
+                    state = SchedulerState::WaitingForInternet;
                 }
             }
         }

@@ -68,12 +68,17 @@ async fn main() -> Result<()> {
         let storage = Arc::clone(&storage);
         let targets = targets.clone();
 
-        info!("🟢 Spawnando scheduler para probe: {:?}", probe);
+        info!(
+            "🟢 Spawnando scheduler para probe: {} ({})",
+            probe.location,
+            probe
+                .ip_address
+                .map_or("N/A".to_string(), |ip| ip.to_string())
+        );
 
-        let handle =
-            task::spawn(
-                async move { scheduler::run_scheduler(config, storage, probe, targets).await },
-            );
+        let handle = task::spawn(async move {
+            scheduler::run_scheduler(probe, targets, config, storage).await;
+        });
         handles.push(handle);
     }
 

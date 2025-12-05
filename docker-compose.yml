@@ -2,6 +2,8 @@ services:
   postgres:
     image: postgres:bullseye
     restart: always
+    ports:
+      - 5432:5432
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/postgres/:/docker-entrypoint-initdb.d/
@@ -60,6 +62,7 @@ services:
       - DATABASE_URL=postgres://gus:gus@postgres:5432/monitoramento_rede
       - TZ=America/Sao_Paulo
     restart: always
+    network_mode: "host"
     healthcheck:
       # Se sua aplicação expõe um endpoint HTTP de healthcheck, prefira:
       # test: ["CMD", "curl", "-f", "http://localhost:8080/health"]

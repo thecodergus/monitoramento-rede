@@ -1,15 +1,20 @@
--- 1. Enum para status e tipo de métrica
+-- 1. Enum para status e tipo de métrica (granular IPv4/IPv6)
 CREATE TYPE metric_status AS ENUM ('up', 'down', 'degraded', 'timeout');
-CREATE TYPE metric_type AS ENUM ('ping', 'http', 'dns', 'tcp');
+CREATE TYPE metric_type AS ENUM (
+    'ping_ipv4', 'ping_ipv6',
+    'tcp_ipv4', 'tcp_ipv6',
+    'http_ipv4', 'http_ipv6',
+    'dns_ipv4', 'dns_ipv6'
+);
 
 -- 2. Tabela de alvos monitorados (normalização)
 CREATE TABLE monitoring_targets (
     id SERIAL PRIMARY KEY,
     name TEXT NOT NULL,
-    address TEXT NOT NULL,
+    address INET NOT NULL, -- Suporte nativo a IPv4/IPv6
     asn INTEGER,
     provider TEXT,
-    type TEXT NOT NULL,
+    type TEXT NOT NULL, -- Ex: 'dns_ipv4', 'dns_ipv6', 'tcp_ipv4', etc.
     region TEXT DEFAULT 'global',
     created_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(address)
@@ -48,7 +53,6 @@ CREATE TABLE connectivity_metrics (
     PRIMARY KEY (id, timestamp)
 );
 
-
 -- 6. Tabela de eventos de outage (particionada por RANGE)
 CREATE TABLE outage_events (
     id BIGSERIAL,
@@ -63,14 +67,14 @@ CREATE TABLE outage_events (
     PRIMARY KEY (id, start_time)
 );
 
+-- 7. Tabela de status do alvo
 CREATE TABLE target_status (
     target_id INTEGER PRIMARY KEY,
     last_status TEXT NOT NULL,
     last_change TIMESTAMP NOT NULL
 );
 
-
--- 7. Índices otimizados para workloads de monitoramento
+-- 8. Índices otimizados para workloads de monitoramento
 CREATE INDEX idx_metrics_time_target ON connectivity_metrics (timestamp DESC, target_id);
 CREATE INDEX idx_metrics_status_time ON connectivity_metrics (status, timestamp DESC);
 CREATE INDEX idx_metrics_type ON connectivity_metrics (metric_type);
@@ -79,33 +83,29 @@ CREATE INDEX idx_outage_time ON outage_events (start_time DESC);
 CREATE INDEX idx_outage_duration ON outage_events (duration_seconds) WHERE duration_seconds IS NOT NULL;
 CREATE INDEX idx_metrics_brin_time ON connectivity_metrics USING BRIN (timestamp);
 
+-- 9. Ingestão de dados de exemplo
 
-
--- Ingestão de dados
-
--- Cloudflare DNS
+-- DNS públicos e Registro.br (IPv4 e IPv6)
 INSERT INTO monitoring_targets (name, address, asn, provider, type, region) VALUES
-('Google Public DNS', '8.8.8.8', 15169, 'Google', 'dns', 'global'),
-('OpenDNS', '208.67.222.222', 36692, 'Cisco', 'dns', 'global'),
-('Google Public DNS (IPv6)', '2001:4860:4860::8888', 15169, 'Google', 'dns', 'global'),
-('OpenDNS (IPv6)', '2620:119:35::35', 36692, 'Cisco', 'dns', 'global'),
-('Google Public DNS (Alt IPv6)', '2001:4860:4860::8844', 15169, 'Google', 'dns', 'global'),
-('OpenDNS (Alt)', '208.67.220.220', 36692, 'Cisco', 'dns', 'global'),
-('Google Public DNS (Alt)', '8.8.4.4', 15169, 'Google', 'dns', 'global'),
-('OpenDNS (Alt IPv6)', '2620:119:53::53', 36692, 'Cisco', 'dns', 'global');
+('Google Public DNS', '8.8.8.8', 15169, 'Google', 'dns_ipv4', 'global'),
+('OpenDNS', '208.67.222.222', 36692, 'Cisco', 'dns_ipv4', 'global'),
+('Google Public DNS (IPv6)', '2001:4860:4860::8888', 15169, 'Google', 'dns_ipv6', 'global'),
+('OpenDNS (IPv6)', '2620:119:35::35', 36692, 'Cisco', 'dns_ipv6', 'global'),
+('Google Public DNS (Alt IPv6)', '2001:4860:4860::8844', 15169, 'Google', 'dns_ipv6', 'global'),
+('OpenDNS (Alt)', '208.67.220.220', 36692, 'Cisco', 'dns_ipv4', 'global'),
+('Google Public DNS (Alt)', '8.8.4.4', 15169, 'Google', 'dns_ipv4', 'global'),
+('OpenDNS (Alt IPv6)', '2620:119:53::53', 36692, 'Cisco', 'dns_ipv6', 'global'),
 
--- Registro.br (NIC.br) - Todos servidores autoritativos IPv4 e IPv6
--- ('Registro.br a.dns.br', '200.160.0.10', 22548, 'NIC.br', 'dns', 'br'),
--- ('Registro.br a.dns.br (IPv6)', '2001:12f8:6::10', 22548, 'NIC.br', 'dns', 'br'),
--- ('Registro.br b.dns.br', '200.189.41.10', 22548, 'NIC.br', 'dns', 'br'),
--- ('Registro.br b.dns.br (IPv6)', '2001:12f8:8::10', 22548, 'NIC.br', 'dns', 'br'),
--- ('Registro.br c.dns.br', '200.192.233.10', 22548, 'NIC.br', 'dns', 'br'),
--- ('Registro.br c.dns.br (IPv6)', '2001:12f8:a::10', 22548, 'NIC.br', 'dns', 'br'),
--- ('Registro.br d.dns.br', '200.219.154.10', 22548, 'NIC.br', 'dns', 'br'),
--- ('Registro.br d.dns.br (IPv6)', '2001:12f8:4::10', 22548, 'NIC.br', 'dns', 'br'),
--- ('Registro.br e.dns.br', '200.229.248.10', 22548, 'NIC.br', 'dns', 'br'),
--- ('Registro.br e.dns.br (IPv6)', '2001:12f8:2::10', 22548, 'NIC.br', 'dns', 'br');
-
+('Registro.br a.dns.br', '200.160.0.10', 22548, 'NIC.br', 'dns_ipv4', 'br'),
+('Registro.br a.dns.br (IPv6)', '2001:12f8:6::10', 22548, 'NIC.br', 'dns_ipv6', 'br'),
+('Registro.br b.dns.br', '200.189.41.10', 22548, 'NIC.br', 'dns_ipv4', 'br'),
+('Registro.br b.dns.br (IPv6)', '2001:12f8:8::10', 22548, 'NIC.br', 'dns_ipv6', 'br'),
+('Registro.br c.dns.br', '200.192.233.10', 22548, 'NIC.br', 'dns_ipv4', 'br'),
+('Registro.br c.dns.br (IPv6)', '2001:12f8:a::10', 22548, 'NIC.br', 'dns_ipv6', 'br'),
+('Registro.br d.dns.br', '200.219.154.10', 22548, 'NIC.br', 'dns_ipv4', 'br'),
+('Registro.br d.dns.br (IPv6)', '2001:12f8:4::10', 22548, 'NIC.br', 'dns_ipv6', 'br'),
+('Registro.br e.dns.br', '200.229.248.10', 22548, 'NIC.br', 'dns_ipv4', 'br'),
+('Registro.br e.dns.br (IPv6)', '2001:12f8:2::10', 22548, 'NIC.br', 'dns_ipv6', 'br');
 
 -- SOUTH AMERICA (5 probes)
 INSERT INTO monitoring_probes (location, ip_address, provider) VALUES
