@@ -15,7 +15,7 @@ use std::collections::{HashMap, VecDeque};
 #[derive(Debug, Clone)]
 pub struct ConsensusState {
     /// Histórico dos últimos N ciclos (cada ciclo: vetor de métricas de conectividade)
-    history: VecDeque<Vec<ConnectivityMetric>>,
+    pub history: VecDeque<Vec<ConnectivityMetric>>,
     /// Quantidade de ciclos consecutivos necessários para considerar falha
     fail_threshold: usize,
     /// Quantidade mínima de targets em falha para acionar consenso

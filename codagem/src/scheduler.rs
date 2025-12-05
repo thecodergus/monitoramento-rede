@@ -19,10 +19,10 @@ use crate::{config::Config, ping, storage::Storage};
 use chrono::Utc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::net::TcpStream;
+use tokio::sync::{Mutex, MutexGuard};
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
-
-use tokio::net::TcpStream;
 use trust_dns_resolver::TokioAsyncResolver;
 
 /// Verificação multi-método de conectividade.
@@ -115,13 +115,11 @@ pub async fn run_scheduler(
     targets: Vec<Target>,
     config: Arc<Config>,
     storage: Arc<Storage>,
+    consensus_state: Arc<Mutex<ConsensusState>>,
 ) {
     let mut state = SchedulerState::WaitingForInternet;
     let mut warmup = TargetWarmupState::new(3);
     let mut cycle_number = 0;
-
-    // 2️⃣ Instancia ConsensusState com parâmetros do config
-    let mut consensus_state = ConsensusState::new(config.fail_threshold, config.consensus);
 
     let mut ticker = interval(Duration::from_secs(config.cycle_interval_secs));
     loop {
@@ -134,16 +132,67 @@ pub async fn run_scheduler(
                     "[PROBE {}] Aguardando conectividade de internet...",
                     probe.location
                 );
+
+                // Coleta métricas (todas Down) mesmo sem internet
+                let metrics = ping::ping_targets(
+                    &targets,
+                    &probe,
+                    config.ping_count,
+                    config.timeout_secs,
+                    0, // ciclo fictício
+                )
+                .await;
+
+                let now: chrono::DateTime<Utc> = Utc::now();
+
+                // Atualiza o consenso e loga o histórico
+                let outage_event_opt = {
+                    let mut consensus: MutexGuard<'_, ConsensusState> =
+                        consensus_state.lock().await;
+                    debug!(
+                        "[CONSENSUS {}] [WAITING] Lock ConsensusState OK, histórico: {} ciclos",
+                        probe.location,
+                        consensus.history.len()
+                    );
+                    let result: Option<crate::types::OutageEvent> =
+                        consensus.update(metrics.clone(), now);
+                    debug!(
+                        "[CONSENSUS {}] [WAITING] ConsensusState::update = {:?} | Histórico: {} ciclos",
+                        probe.location,
+                        result,
+                        consensus.history.len()
+                    );
+                    result
+                };
+
+                if let Some(outage_event) = outage_event_opt {
+                    info!(
+                        "[CONSENSUS {}] [WAITING] Outage detectado/encerrado: {:?}",
+                        probe.location, outage_event
+                    );
+                    if let Err(e) = storage.insert_outage_event(&outage_event).await {
+                        error!(
+                            "[CONSENSUS {}] [WAITING] Falha ao persistir outage: {:?}",
+                            probe.location, e
+                        );
+                    }
+                } else {
+                    debug!(
+                        "[CONSENSUS {}] [WAITING] Sem outages detectados neste ciclo (sem internet)",
+                        probe.location
+                    );
+                }
+
+                // Checa se a internet voltou
                 if check_connectivity_resilient(&targets, &probe, &config).await {
                     info!(
                         "[PROBE {}] Internet detectada, iniciando monitoramento.",
                         probe.location
                     );
                     state = SchedulerState::Monitoring;
-                } else {
-                    continue;
                 }
             }
+
             SchedulerState::Monitoring => {
                 cycle_number += 1;
                 let cycle = Cycle {
@@ -201,18 +250,27 @@ pub async fn run_scheduler(
                 }
 
                 // 3️⃣ INTEGRAÇÃO DO CONSENSO: Atualiza ConsensusState e persiste outages
-                if let Some(outage_event) = consensus_state.update(metrics.clone(), now) {
+                let mut consensus = consensus_state.lock().await;
+                let now = Utc::now();
+
+                if let Some(outage_event) = consensus.update(metrics.clone(), now) {
                     info!(
-                        "[PROBE {}] Outage Event detectado/encerrado: {:?}",
+                        "[CONSENSO {}] Outage detectado: {:?}",
                         probe.location, outage_event
                     );
                     if let Err(e) = storage.insert_outage_event(&outage_event).await {
                         error!(
-                            "[PROBE {}] Falha ao persistir OutageEvent: {:?}",
+                            "[CONSENSO {}] Falha ao persistir outage: {:?}",
                             probe.location, e
                         );
                     }
+                } else {
+                    info!(
+                        "[CONSENSO {}] Sem outages detectados neste ciclo",
+                        probe.location
+                    );
                 }
+                drop(consensus);
 
                 if !check_connectivity_resilient(&targets, &probe, &config).await {
                     warn!(

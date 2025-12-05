@@ -7,9 +7,11 @@ mod scheduler;
 mod storage;
 mod types;
 
+use crate::consensus::ConsensusState;
 use anyhow::{Context, Result};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Mutex;
 use tokio::task;
 use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
@@ -26,6 +28,11 @@ async fn main() -> Result<()> {
     let config: Arc<config::Config> =
         Arc::new(config::Config::load().context("Falha ao carregar configuração")?);
     debug!("Configuração carregada: {:?}", config);
+
+    let consensus_state = Arc::new(Mutex::new(ConsensusState::new(
+        config.fail_threshold,
+        config.consensus,
+    )));
 
     // Conectando ao banco de dados com timeout
     info!("🗄️  Conectando ao banco de dados...");
@@ -76,8 +83,10 @@ async fn main() -> Result<()> {
                 .map_or("N/A".to_string(), |ip| ip.to_string())
         );
 
+        let consensus_state: Arc<Mutex<ConsensusState>> = consensus_state.clone();
+
         let handle = task::spawn(async move {
-            scheduler::run_scheduler(probe, targets, config, storage).await;
+            scheduler::run_scheduler(probe, targets, config, storage, consensus_state).await;
         });
         handles.push(handle);
     }
