@@ -1,18 +1,19 @@
-//! ping.rs — Execução concorrente de pings com granularidade IPv4/IPv6
+//! ping.rs — Execução concorrente de pings ICMP nativos com granularidade IPv4/IPv6
 //!
+//! Implementação idiomática, funcional e auditável usando surge-ping.
 //! Compatível com types.rs moderno: usa ConnectivityMetric, MetricType granular, status robusto.
-//! Tipagem estática rigorosa, concorrência segura, pattern matching idiomático.
 
 use crate::types::{ConnectivityMetric, MetricStatus, MetricType, Probe, Target};
 use chrono::Utc;
 use std::net::IpAddr;
-use tokio::process::Command;
-use tokio::time::{Duration, timeout};
+use std::sync::Arc;
+use surge_ping::{Client, Config, PingIdentifier, PingSequence};
+use tokio::time::Duration;
 
 /// Executa pings concorrentes a múltiplos alvos, retornando métricas detalhadas.
 ///
 /// - Determina automaticamente se o alvo é IPv4 ou IPv6.
-/// - Usa `ping -4` ou `ping -6` conforme o tipo de IP.
+/// - Usa surge-ping para ICMP nativo, async, auditável.
 /// - Status: Up, Degraded, Down, Timeout.
 /// - Retorna vetor de `ConnectivityMetric` pronto para persistência.
 ///
@@ -32,56 +33,48 @@ pub async fn ping_targets(
     timeout_secs: u64,
     cycle_id: i64,
 ) -> Vec<ConnectivityMetric> {
+    let config = Config::default();
+    let client = Arc::new(Client::new(&config).expect("Falha ao criar Client surge-ping"));
+
     let mut handles = Vec::with_capacity(targets.len());
 
-    for target in targets.iter().cloned() {
+    for (i, target) in targets.iter().cloned().enumerate() {
         let probe = probe.clone();
+        let client = client.clone();
         let handle = tokio::spawn(async move {
             let mut success = 0;
             let mut total_time = 0.0;
             let mut last_error = None;
             let mut timeout_count = 0;
 
-            // Determina o tipo de métrica granular (IPv4/IPv6)
             let metric_type = match target.address {
                 IpAddr::V4(_) => MetricType::PingIpv4,
                 IpAddr::V6(_) => MetricType::PingIpv6,
             };
 
-            for _ in 0..ping_count {
-                let start = Utc::now();
-                // Seleciona comando e argumentos conforme o tipo de IP
-                let mut cmd = Command::new("ping");
-                if target.address.is_ipv6() {
-                    cmd.arg("-6");
-                } else {
-                    cmd.arg("-4");
-                }
-                cmd.arg("-c").arg("1").arg(target.address.to_string());
+            // Criação síncrona do pinger
+            let mut pinger = client.pinger(target.address, PingIdentifier(i as u16));
+            pinger.await.timeout(Duration::from_secs(timeout_secs));
+            let payload = [0u8; 32]; // Payload padrão de 32 bytes
 
-                let res = timeout(Duration::from_secs(timeout_secs), cmd.output()).await;
-
-                match res {
-                    Ok(Ok(output)) if output.status.success() => {
+            for seq in 0..ping_count {
+                pinger = client.pinger(target.address, PingIdentifier(i as u16));
+                match pinger.await.ping(PingSequence(seq as u16), &payload).await {
+                    Ok((_reply, dur)) => {
                         success += 1;
-                        let elapsed = (Utc::now() - start).num_milliseconds() as f64;
-                        total_time += elapsed;
-                    }
-                    Ok(Ok(output)) => {
-                        last_error = Some(String::from_utf8_lossy(&output.stderr).to_string());
-                    }
-                    Ok(Err(e)) => {
-                        last_error = Some(e.to_string());
+                        total_time += dur.as_secs_f64() * 1000.0; // ms
                     }
                     Err(e) => {
-                        // Timeout explícito
-                        last_error = Some(e.to_string());
-                        timeout_count += 1;
+                        if e.to_string().contains("timeout") {
+                            timeout_count += 1;
+                            last_error = Some("timeout".to_string());
+                        } else {
+                            last_error = Some(e.to_string());
+                        }
                     }
                 }
             }
 
-            // Determina status conforme sucesso, falha parcial ou timeout total
             let status = if timeout_count == ping_count {
                 MetricStatus::Timeout
             } else if success == ping_count {
