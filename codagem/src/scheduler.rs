@@ -10,6 +10,7 @@
 //! - Enum MetricType granular (PingIpv4/PingIpv6)
 //! - Lógica funcional, concorrente e auditável
 
+use crate::consensus::ConsensusState;
 use crate::types::{
     ConnectivityMetric, Cycle, MetricStatus, MetricType, Probe, SchedulerState, Target,
     TargetWarmupState,
@@ -108,6 +109,7 @@ async fn check_connectivity_resilient(targets: &[Target], probe: &Probe, config:
 /// - Aguarda internet antes de iniciar ciclos
 /// - Usa TargetWarmupState para evitar falsos positivos
 /// - Integra com storage, ping e consensus
+
 pub async fn run_scheduler(
     probe: Probe,
     targets: Vec<Target>,
@@ -115,8 +117,11 @@ pub async fn run_scheduler(
     storage: Arc<Storage>,
 ) {
     let mut state = SchedulerState::WaitingForInternet;
-    let mut warmup = TargetWarmupState::new(3); // Exemplo: 3 ciclos de sucesso para "aquecimento"
+    let mut warmup = TargetWarmupState::new(3);
     let mut cycle_number = 0;
+
+    // 2️⃣ Instancia ConsensusState com parâmetros do config
+    let mut consensus_state = ConsensusState::new(config.fail_threshold, config.consensus);
 
     let mut ticker = interval(Duration::from_secs(config.cycle_interval_secs));
     loop {
@@ -148,7 +153,6 @@ pub async fn run_scheduler(
                     cycle_number,
                     probe_count: 1,
                 };
-                // Persiste ciclo e obtém id
                 let cycle_id = match storage.insert_cycle(&cycle).await {
                     Ok(id) => id,
                     Err(e) => {
@@ -160,7 +164,6 @@ pub async fn run_scheduler(
                     }
                 };
 
-                // Coleta métricas de ping concorrente
                 let metrics = ping::ping_targets(
                     &targets,
                     &probe,
@@ -170,7 +173,6 @@ pub async fn run_scheduler(
                 )
                 .await;
 
-                // Persiste métricas
                 for metric in &metrics {
                     if let Err(e) = storage.insert_connectivity_metric(metric).await {
                         error!(
@@ -180,7 +182,6 @@ pub async fn run_scheduler(
                     }
                 }
 
-                // Atualiza warmup e status dos targets
                 for metric in &metrics {
                     let is_success = metric.status == MetricStatus::Up;
                     let warmed = warmup.update(metric.target_id, is_success);
@@ -188,7 +189,6 @@ pub async fn run_scheduler(
                         "[PROBE {}] Target {} warmup: {} (status: {:?})",
                         probe.location, metric.target_id, warmed, metric.status
                     );
-                    // Atualiza status persistido
                     if let Err(e) = storage
                         .set_target_status(metric.target_id, &metric.status)
                         .await
@@ -200,9 +200,20 @@ pub async fn run_scheduler(
                     }
                 }
 
-                // TODO: Integrar lógica de consenso/outage se necessário
+                // 3️⃣ INTEGRAÇÃO DO CONSENSO: Atualiza ConsensusState e persiste outages
+                if let Some(outage_event) = consensus_state.update(metrics.clone(), now) {
+                    info!(
+                        "[PROBE {}] Outage Event detectado/encerrado: {:?}",
+                        probe.location, outage_event
+                    );
+                    if let Err(e) = storage.insert_outage_event(&outage_event).await {
+                        error!(
+                            "[PROBE {}] Falha ao persistir OutageEvent: {:?}",
+                            probe.location, e
+                        );
+                    }
+                }
 
-                // Verifica se perdeu conectividade geral
                 if !check_connectivity_resilient(&targets, &probe, &config).await {
                     warn!(
                         "[PROBE {}] Perda de conectividade detectada, retornando para WAITING_FOR_INTERNET.",
