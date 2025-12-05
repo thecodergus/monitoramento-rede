@@ -70,7 +70,7 @@ CREATE TABLE outage_events (
 -- 7. Tabela de status do alvo
 CREATE TABLE target_status (
     target_id INTEGER PRIMARY KEY,
-    last_status TEXT NOT NULL,
+    last_status metric_status NOT NULL,
     last_change TIMESTAMP NOT NULL
 );
 
@@ -127,7 +127,6 @@ INSERT INTO monitoring_probes (location, ip_address, provider) VALUES
 
 -- WESTERN EUROPE (6 probes)
 INSERT INTO monitoring_probes (location, ip_address, provider) VALUES
-('Frankfurt - AWS eu-central-1', '18.184.0.1', 'AWS'),
 ('Frankfurt - AWS eu-central-1 IPv6', '2a05:d018:400:8000::1', 'AWS'),
 ('London - Azure UK South', '51.140.0.1', 'Azure'),
 ('Amsterdam - GCP europe-west4', '35.204.0.1', 'GCP'),
