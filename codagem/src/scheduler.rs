@@ -12,8 +12,8 @@
 
 use crate::consensus::ConsensusState;
 use crate::types::{
-    ConnectivityMetric, Cycle, MetricStatus, MetricType, Probe, SchedulerState, Target,
-    TargetWarmupState,
+    ConnectivityMetric, Cycle, MetricStatus, MetricType, OutageEvent, Probe, SchedulerState,
+    Target, TargetWarmupState,
 };
 use crate::{config::Config, ping, storage::Storage};
 use chrono::Utc;
@@ -117,11 +117,12 @@ pub async fn run_scheduler(
     storage: Arc<Storage>,
     consensus_state: Arc<Mutex<ConsensusState>>,
 ) {
-    let mut state = SchedulerState::WaitingForInternet;
-    let mut warmup = TargetWarmupState::new(3);
+    let mut state: SchedulerState = SchedulerState::WaitingForInternet;
+    let mut warmup: TargetWarmupState = TargetWarmupState::new(3);
     let mut cycle_number = 0;
 
-    let mut ticker = interval(Duration::from_secs(config.cycle_interval_secs));
+    let mut ticker: tokio::time::Interval =
+        interval(Duration::from_secs(config.cycle_interval_secs));
     loop {
         ticker.tick().await;
         let now = Utc::now();
@@ -146,7 +147,7 @@ pub async fn run_scheduler(
                 let now: chrono::DateTime<Utc> = Utc::now();
 
                 // Atualiza o consenso e loga o histórico
-                let outage_event_opt = {
+                let outage_event_opt: Option<OutageEvent> = {
                     let mut consensus: MutexGuard<'_, ConsensusState> =
                         consensus_state.lock().await;
                     debug!(
@@ -154,8 +155,7 @@ pub async fn run_scheduler(
                         probe.location,
                         consensus.history.len()
                     );
-                    let result: Option<crate::types::OutageEvent> =
-                        consensus.update(metrics.clone(), now);
+                    let result: Option<OutageEvent> = consensus.update(metrics.clone(), now);
                     debug!(
                         "[CONSENSUS {}] [WAITING] ConsensusState::update = {:?} | Histórico: {} ciclos",
                         probe.location,
@@ -213,7 +213,7 @@ pub async fn run_scheduler(
                     }
                 };
 
-                let metrics = ping::ping_targets(
+                let metrics: Vec<ConnectivityMetric> = ping::ping_targets(
                     &targets,
                     &probe,
                     config.ping_count,
@@ -232,8 +232,8 @@ pub async fn run_scheduler(
                 }
 
                 for metric in &metrics {
-                    let is_success = metric.status == MetricStatus::Up;
-                    let warmed = warmup.update(metric.target_id, is_success);
+                    let is_success: bool = metric.status == MetricStatus::Up;
+                    let warmed: bool = warmup.update(metric.target_id, is_success);
                     debug!(
                         "[PROBE {}] Target {} warmup: {} (status: {:?})",
                         probe.location, metric.target_id, warmed, metric.status
@@ -250,8 +250,8 @@ pub async fn run_scheduler(
                 }
 
                 // 3️⃣ INTEGRAÇÃO DO CONSENSO: Atualiza ConsensusState e persiste outages
-                let mut consensus = consensus_state.lock().await;
-                let now = Utc::now();
+                let mut consensus: MutexGuard<'_, ConsensusState> = consensus_state.lock().await;
+                let now: chrono::DateTime<Utc> = Utc::now();
 
                 if let Some(outage_event) = consensus.update(metrics.clone(), now) {
                     info!(

@@ -29,9 +29,10 @@ async fn main() -> Result<()> {
         Arc::new(config::Config::load().context("Falha ao carregar configuração")?);
     debug!("Configuração carregada: {:?}", config);
 
-    let consensus_state = Arc::new(Mutex::new(ConsensusState::new(
+    let consensus_state: Arc<Mutex<ConsensusState>> = Arc::new(Mutex::new(ConsensusState::new(
         config.fail_threshold,
         config.consensus,
+        None,
     )));
 
     // Conectando ao banco de dados com timeout
