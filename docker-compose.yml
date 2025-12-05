@@ -5,6 +5,8 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/postgres/:/docker-entrypoint-initdb.d/
+    ports:
+      - 2221:5432
     environment:
       POSTGRES_USER: gus
       POSTGRES_PASSWORD: gus
@@ -60,6 +62,7 @@ services:
       - DATABASE_URL=postgres://gus:gus@postgres:5432/monitoramento_rede
       - TZ=America/Sao_Paulo
     restart: always
+    network_mode: "host"
     healthcheck:
       # Se sua aplicação expõe um endpoint HTTP de healthcheck, prefira:
       # test: ["CMD", "curl", "-f", "http://localhost:8080/health"]

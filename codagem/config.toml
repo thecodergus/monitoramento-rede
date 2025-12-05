@@ -3,4 +3,4 @@ timeout_secs = 1
 fail_threshold = 1
 consensus = 5
 cycle_interval_secs = 2
-database_url = "postgres://gus:gus@postgres:5432/monitoramento_rede"
+database_url = "postgres://gus:gus@localhost:2221/monitoramento_rede"
